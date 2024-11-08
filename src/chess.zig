@@ -15,7 +15,9 @@ allocator: Allocator,
 pub fn init(allocator: Allocator) Allocator.Error!Self {
     var self: Self = undefined;
     self.moves = std.ArrayList(Move).init(allocator);
+    errdefer self.moves.deinit();
     self.legal_moves = std.hash_map.AutoHashMap(Move, void).init(allocator);
+    errdefer self.legal_moves.deinit();
     self.allocator = allocator;
 
     try self.setFEN(startpos);
@@ -122,8 +124,9 @@ pub fn makeMove(self: *Self, move: Move) (MoveError || Allocator.Error)!void {
 
     self.setSquare(move.from, null);
     self.setSquare(move.to, piece1);
-    try self.updateMoveList();
     self.turn = if (self.turn == .white) .black else .white;
+    try self.updateMoveList();
+    try self.moves.append(move);
 }
 
 pub fn updateMoveList(self: *Self) Allocator.Error!void {
@@ -131,7 +134,7 @@ pub fn updateMoveList(self: *Self) Allocator.Error!void {
 
     for (self.board, 0..) |rank_pieces, rank| {
         for (rank_pieces, 0..) |piece, file| {
-            if (piece) |p| {
+            if (piece) |p| if (p.color == self.turn) {
                 const square = Square{
                     .rank = @intCast(rank),
                     .file = @intCast(file)
@@ -144,7 +147,7 @@ pub fn updateMoveList(self: *Self) Allocator.Error!void {
                     .king   => try self.addKingMoves(square),
                     .pawn   => try self.addPawnMoves(square)
                 }
-            }
+            };
         }
     }
 }
@@ -176,7 +179,29 @@ fn addRookMoves(self: *Self, square: Square) Allocator.Error!void {
 }
 
 fn addKnightMoves(self: *Self, square: Square) Allocator.Error!void {
-    _ = self; _ = square;
+    const enemy_color: Piece.Color = if (self.turn == .white) .black else .white;
+
+    const squares = .{
+        .{-2, -1}, .{2, -1}, .{-2, 1}, .{2, 1},
+        .{-1, -2}, .{1, -2}, .{-1, 2}, .{1, 2}
+    };
+    inline for (squares) |sq| {
+        const new_rank: i8 = @as(i8, @intCast(square.rank)) + sq[0];
+        const new_file: i8 = @as(i8, @intCast(square.file)) + sq[1];
+        if (new_rank >= 0 and new_rank < 8 and new_file >= 0 and new_file < 8) {
+            const move = Move{
+                .from = square,
+                .to = Square{
+                    .rank = @intCast(new_rank),
+                    .file = @intCast(new_file)
+                }
+            };
+            const piece = self.getSquare(move.to);
+            if (piece == null or piece.?.color == enemy_color) {
+                try self.legal_moves.put(move, {});
+            }
+        }
+    }
 }
 
 fn addBishopMoves(self: *Self, square: Square) Allocator.Error!void {
@@ -194,11 +219,71 @@ fn addQueenMoves(self: *Self, square: Square) Allocator.Error!void {
 }
 
 fn addKingMoves(self: *Self, square: Square) Allocator.Error!void {
-    _ = self; _ = square;
+    const enemy_color: Piece.Color = if (self.turn == .white) .black else .white;
+
+    const squares = .{
+        .{ 1, -1}, .{ 1, 0}, .{ 1, 1},
+        .{ 0, -1},           .{ 0, 1},
+        .{-1, -1}, .{-1, 0}, .{-1, 1},
+    };
+    inline for (squares) |sq| {
+        const new_rank: i8 = @as(i8, @intCast(square.rank)) + sq[0];
+        const new_file: i8 = @as(i8, @intCast(square.file)) + sq[1];
+        if (new_rank >= 0 and new_rank < 8 and new_file >= 0 and new_file < 8) {
+            const move = Move{
+                .from = square,
+                .to = Square{
+                    .rank = @intCast(new_rank),
+                    .file = @intCast(new_file)
+                }
+            };
+            const piece = self.getSquare(move.to);
+            if (piece == null or piece.?.color == enemy_color) {
+                try self.legal_moves.put(move, {});
+            }
+        }
+    }
 }
 
 fn addPawnMoves(self: *Self, square: Square) Allocator.Error!void {
-    _ = self; _ = square;
+    const enemy_color: Piece.Color = if (self.turn == .white) .black else .white;
+
+    const advance = Move{
+        .from = square,
+        .to = Square{
+            .rank = if (self.turn == .white) square.rank + 1 else square.rank - 1,
+            .file = square.file
+        }
+    };
+    if (self.getSquare(advance.to) == null) try self.legal_moves.put(advance, {});
+
+    if (self.turn == .white and square.rank == 1 or self.turn == .black and square.rank == 6) {
+        const double = Move{
+            .from = square,
+            .to = Square{
+                .rank = if (self.turn == .white) square.rank + 2 else square.rank - 2,
+                .file = square.file,
+            }
+        };
+        if (self.getSquare(double.to) == null) try self.legal_moves.put(double, {});
+    }
+
+    if (self.turn == .white and square.rank == 7) return;
+    if (self.turn == .black and square.rank == 0) return;
+
+    // capturing
+    if (square.file < 7) {
+        const right_sq = Square{.rank = square.rank + 1, .file = square.file + 1};
+        if (self.getSquare(right_sq)) |piece| if (piece.color == enemy_color) {
+            try self.legal_moves.put(Move{.from = square, .to = right_sq}, {});
+        };
+    }
+    if (square.file > 0) {
+        const left_sq = Square{.rank = square.rank + 1, .file = square.file - 1};
+        if (self.getSquare(left_sq)) |piece| if (piece.color == enemy_color) {
+            try self.legal_moves.put(Move{.from = square, .to = left_sq}, {});
+        };
+    }
 }
 
 
@@ -235,10 +320,9 @@ pub fn printMoves(self: Self, writer: anytype) !void {
 }
 
 pub fn printLegalMoves(self: Self, writer: anytype) !void {
-    var keys = self.legal_moves.keyIterator();
     try writer.print("info string", .{});
-    var key_opt = keys.next();
-    while (key_opt) |move| : (key_opt = keys.next()) {
+    var keys = self.legal_moves.keyIterator();
+    while (keys.next()) |move| {
         try writer.print(" {c}{c}{c}{c}", .{
             @as(u8, @intCast(move.from.file)) + 'a', @as(u8, @intCast(move.from.rank)) + '1',
             @as(u8, @intCast(move.to.file))   + 'a', @as(u8, @intCast(move.to.rank))   + '1',

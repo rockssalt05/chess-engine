@@ -46,14 +46,13 @@ pub fn main() !void {
             //.register => {},
             .ucinewgame => engine.game.newGame(),
             .position => |cmd| {
+                defer if (cmd.moves) |moves| moves.deinit();
                 try engine.game.setFEN(cmd.fen);
                 if (cmd.moves) |moves| {
                     engine.game.moves.clearRetainingCapacity();
                     for (moves.items) |move| {
-                        try engine.game.makeMove(move);
+                        engine.game.makeMove(move) catch break;
                     }
-                    try engine.game.moves.appendSlice(moves.items);
-                    moves.deinit();
                     try engine.game.printMoves(stdout);
                 }
                 try engine.game.printLegalMoves(stdout);
