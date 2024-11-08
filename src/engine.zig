@@ -13,10 +13,9 @@ const Engine = struct {
     debug: bool = true,
 
     pub fn init(allocator: std.mem.Allocator) Allocator.Error!Self {
-        var self: Self = undefined;
-        self.game = try Chess.init(allocator);
-        self.uci_response = null;
-        return self;
+        return Self{
+            .game = try Chess.init(allocator),
+        };
     }
 
     pub fn deinit(self: *Self) void {
@@ -25,20 +24,20 @@ const Engine = struct {
 };
 
 pub fn main() !void {
-    var gpa_config = std.heap.GeneralPurposeAllocator(.{}){};
-    const gpa = gpa_config.allocator();
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
     const stdin = std.io.getStdIn().reader();
     const stdout = std.io.getStdOut().writer();
 
-    var uci_commands = uci.ParseIterator(@TypeOf(stdin)).init(gpa, stdin);
+    var uci_commands = uci.commandIterator(allocator, stdin);
     defer uci_commands.deinit();
 
-    var engine = try Engine.init(gpa);
+    var engine = try Engine.init(allocator);
     defer engine.deinit();
     
-    var uci_command = uci_commands.next() catch .empty;
-    while (uci_command) |command| : (uci_command = uci_commands.next() catch .empty) {
+    while (uci_commands.next() catch .empty) |command| {
         switch (command) {
             .uci => engine.uci_response = .uciok,
             .debug => |val| engine.debug = val,

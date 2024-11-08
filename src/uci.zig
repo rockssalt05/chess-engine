@@ -3,7 +3,11 @@ const Allocator = std.mem.Allocator;
 
 const Chess = @import("chess.zig");
 
-pub fn ParseIterator(Reader: type) type {
+pub fn commandIterator(allocator: Allocator, reader: anytype) CommandIterator(@TypeOf(reader)) {
+    return CommandIterator(@TypeOf(reader)).init(allocator, reader);
+}
+
+fn CommandIterator(Reader: type) type {
     return struct {
         const Self = @This();
         reader: Reader,
@@ -34,15 +38,12 @@ pub fn ParseIterator(Reader: type) type {
 
             var str = self.line.items;
             removeExtraWhitespace(&str);
-            // skip empty lines
-            if (str.len == 0) return .empty;
 
             return try ServerCommand.parse(str, self.allocator);
         }
 
-        const whitespace = " \x0d\n\t";
         fn removeExtraWhitespace(str: *[]u8) void {
-            var it = std.mem.splitAny(u8, str.*, whitespace);
+            var it = std.mem.splitAny(u8, str.*, &std.ascii.whitespace);
             var i: usize = 0;
             var field = it.next();
             while (field) |f| : (field = it.next()) {
@@ -103,8 +104,11 @@ pub const ServerCommand = union(enum) {
     };
 
     pub fn parse(str: []const u8, allocator: Allocator) (ParseError || Allocator.Error)!Self {
+        if (str.len == 0) return .empty;
+
         var split = std.mem.splitScalar(u8, str, ' ');
         const arg_0 = split.next().?;
+
         const basic = .{
             .{"uci",        .uci},
             .{"isready",    .isready},
@@ -120,10 +124,10 @@ pub const ServerCommand = union(enum) {
         const arg_1_opt = split.next();
 
         if (std.mem.eql(u8, arg_0, "debug")) {
-            const word = arg_1_opt orelse return error.ExpectedValue;
-            const val = if (std.mem.eql(u8, word, "on"))
+            const arg_1 = arg_1_opt orelse return error.ExpectedValue;
+            const val = if (std.mem.eql(u8, arg_1, "on"))
                 true
-            else if (std.mem.eql(u8, word, "off"))
+            else if (std.mem.eql(u8, arg_1, "off"))
                 false
             else return error.InvalidArg;
             return ServerCommand{ .debug = val };
@@ -138,21 +142,16 @@ pub const ServerCommand = union(enum) {
 
             var moves: ?std.ArrayList(Chess.Move) = null;
 
-            const arg_2_opt = split.next();
-
-            if (arg_2_opt) |arg_2| {
+            if (split.next()) |arg_2| {
                 if (!std.mem.eql(u8, arg_2, "moves")) return error.InvalidArg;
-                var move_opt = split.next();
-
                 moves = std.ArrayList(Chess.Move).init(allocator);
                 errdefer moves.?.deinit();
 
-                if (move_opt) |move| {
+                if (split.next()) |move| {
                     try moves.?.append(try parseMove(move));
                 } else return error.ExpectedMoves;
 
-                move_opt = split.next();
-                while (move_opt) |move| : (move_opt = split.next()) {
+                while (split.next()) |move| {
                     try moves.?.append(try parseMove(move));
                 }
             }
@@ -167,7 +166,7 @@ pub const ServerCommand = union(enum) {
         // TODO
         return str;
     }
-    
+
     pub fn parseMove(str: []const u8) ParseError!Chess.Move {
         if (str.len != 4) return error.InvalidMove;
         if (str[0] < 'a' or str[0] > 'h') return error.InvalidMove;
