@@ -265,7 +265,9 @@ fn addPawnMoves(self: *Self, square: Square) Allocator.Error!void {
                 .file = square.file,
             }
         };
-        if (self.getSquare(double.to) == null) try self.legal_moves.put(double, {});
+        if (self.getSquare(advance.to) == null and self.getSquare(double.to) == null) {
+            try self.legal_moves.put(double, {});
+        }
     }
 
     if (self.turn == .white and square.rank == 7) return;
@@ -273,13 +275,13 @@ fn addPawnMoves(self: *Self, square: Square) Allocator.Error!void {
 
     // capturing
     if (square.file < 7) {
-        const right_sq = Square{.rank = square.rank + 1, .file = square.file + 1};
+        const right_sq = Square{.rank = advance.to.rank, .file = square.file + 1};
         if (self.getSquare(right_sq)) |piece| if (piece.color == enemy_color) {
             try self.legal_moves.put(Move{.from = square, .to = right_sq}, {});
         };
     }
     if (square.file > 0) {
-        const left_sq = Square{.rank = square.rank + 1, .file = square.file - 1};
+        const left_sq = Square{.rank = advance.to.rank, .file = square.file - 1};
         if (self.getSquare(left_sq)) |piece| if (piece.color == enemy_color) {
             try self.legal_moves.put(Move{.from = square, .to = left_sq}, {});
         };
@@ -309,7 +311,7 @@ pub fn printBoard(self: Self, writer: anytype) !void {
 }
 
 pub fn printMoves(self: Self, writer: anytype) !void {
-    try writer.print("info string", .{});
+    try writer.print("info string moves", .{});
     for (self.moves.items) |move| {
         try writer.print(" {c}{c}{c}{c}", .{
             @as(u8, @intCast(move.from.file)) + 'a', @as(u8, @intCast(move.from.rank)) + '1',
@@ -320,7 +322,7 @@ pub fn printMoves(self: Self, writer: anytype) !void {
 }
 
 pub fn printLegalMoves(self: Self, writer: anytype) !void {
-    try writer.print("info string", .{});
+    try writer.print("info string legal", .{});
     var keys = self.legal_moves.keyIterator();
     while (keys.next()) |move| {
         try writer.print(" {c}{c}{c}{c}", .{
