@@ -66,11 +66,13 @@ pub const ClientCommand = union(enum) {
 
     uciok,
     readyok,
+    bestmove: Chess.Move,
 
     pub fn writeSerialized(self: Self, writer: anytype) !void {
         switch (self) {
             .uciok   => try writer.print("uciok\n", .{}),
             .readyok => try writer.print("readyok\n", .{}),
+            .bestmove => |move| try writer.print("bestmove {any}\n", .{move})
         }
     }
 };
@@ -89,12 +91,19 @@ pub const ServerCommand = union(enum) {
         fen: Chess.Fen,
         moves: ?std.ArrayList(Chess.Move)
     },
-    //go: union(enum) {
-    //    searchmoves,
-    //    ponder,
-    //    //...
-    //},
-    //stop,
+    go: struct {
+        searchmoves: ?std.ArrayList(Chess.Move) = null,
+        ponder: bool = false,
+        wtime: ?u32 = null, btime: ?u32 = null,
+        winc:  ?u32 = null, binc:  ?u32 = null,
+        movestogo: ?u32 = null,
+        depth: ?u32 = null,
+        nodes: ?u32 = null,
+        mate:  ?u32 = null,
+        movetime: ?u32 = null,
+        infinite: bool = false,
+    },
+    stop,
     //ponderhit,
     quit,
 
@@ -103,7 +112,7 @@ pub const ServerCommand = union(enum) {
         ExpectedValue, ExpectedFEN, ExpectedMoves
     };
 
-    pub fn parse(str: []const u8, allocator: Allocator) (ParseError || Allocator.Error)!Self {
+    pub fn parse(str: []const u8, allocator: Allocator) (ParseError || std.fmt.ParseIntError || Allocator.Error)!Self {
         if (str.len == 0) return .empty;
 
         var split = std.mem.splitScalar(u8, str, ' ');
@@ -113,6 +122,7 @@ pub const ServerCommand = union(enum) {
             .{"uci",        .uci},
             .{"isready",    .isready},
             .{"ucinewgame", .ucinewgame},
+            .{"stop", .stop},
             .{"quit", .quit}
         };
         inline for (basic) |cmd| {
@@ -121,10 +131,8 @@ pub const ServerCommand = union(enum) {
             }
         }
 
-        const arg_1_opt = split.next();
-
         if (std.mem.eql(u8, arg_0, "debug")) {
-            const arg_1 = arg_1_opt orelse return error.ExpectedValue;
+            const arg_1 = split.next() orelse return error.ExpectedValue;
             const val = if (std.mem.eql(u8, arg_1, "on"))
                 true
             else if (std.mem.eql(u8, arg_1, "off"))
@@ -134,7 +142,7 @@ pub const ServerCommand = union(enum) {
         }
 
         if (std.mem.eql(u8, arg_0, "position")) {
-            const arg_1 = arg_1_opt orelse return error.ExpectedFEN;
+            const arg_1 = split.next() orelse return error.ExpectedFEN;
             const fen = if (std.mem.eql(u8, arg_1, "startpos"))
                 Chess.startpos
             else
@@ -157,6 +165,45 @@ pub const ServerCommand = union(enum) {
             }
 
             return ServerCommand{ .position = .{ .fen = fen, .moves = moves }};
+        }
+
+        if (std.mem.eql(u8, arg_0, "go")) {
+            var cmd = ServerCommand{.go = .{}};
+            while (true) {
+                const arg = split.next() orelse break;
+
+                if (std.mem.eql(u8, arg, "ponder"))   cmd.go.ponder   = true;
+                if (std.mem.eql(u8, arg, "infinite")) cmd.go.infinite = true;
+
+                if (std.mem.eql(u8, arg, "searchmoves")) {
+                    cmd.go.searchmoves = std.ArrayList(Chess.Move).init(allocator);
+                    errdefer cmd.go.searchmoves.?.deinit();
+
+                    if (split.next()) |move| {
+                        try cmd.go.searchmoves.?.append(try parseMove(move));
+                    } else return error.ExpectedMoves;
+
+                    while (split.next()) |move| {
+                        try cmd.go.searchmoves.?.append(try parseMove(move));
+                    }
+                }
+
+                const args_args = .{
+                    "wtime", "btime",
+                    "winc", "binc",
+                    "movestogo", "depth",
+                    "nodes", "mate",
+                    "movetime",
+                };
+                inline for (args_args) |arg_name| {
+                    if (std.mem.eql(u8, arg, arg_name)) {
+                        const x_str = split.next() orelse return error.ExpectedValue;
+                        // TODO: dont allow underscores
+                        @field(cmd.go, arg_name) = try std.fmt.parseInt(u32, x_str, 10);
+                    }
+                }
+            }
+            return cmd;
         }
 
         return error.InvalidCommand;

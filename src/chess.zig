@@ -11,7 +11,6 @@ legal_moves: std.hash_map.AutoHashMap(Move, void),
 
 allocator: Allocator,
 
-
 pub fn init(allocator: Allocator) Allocator.Error!Self {
     var self: Self = undefined;
     self.moves = std.ArrayList(Move).init(allocator);
@@ -28,10 +27,6 @@ pub fn init(allocator: Allocator) Allocator.Error!Self {
 pub fn deinit(self: *Self) void {
     self.moves.deinit();
     self.legal_moves.deinit();
-}
-
-pub fn newGame(self: *Self) void {
-    self.moves.clearRetainingCapacity();
 }
 
 pub const Fen = []const u8;
@@ -54,8 +49,12 @@ pub fn setFEN(self: *Self, fen: Fen) Allocator.Error!void {
             },
         }
     }
-    try self.updateMoveList();
+
     // TODO: use other fields
+    self.turn = .white;
+
+    self.moves.clearRetainingCapacity();
+    try self.updateMoveList();
 }
 
 const Piece = struct {
@@ -108,7 +107,17 @@ pub fn mkSquare(str: []const u8) Square {
     };
 }
 
-pub const Move = struct { from: Square, to: Square };
+pub const Move = struct {
+    from: Square, to: Square,
+
+    pub fn format(move: Move, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt; _ = options;
+        try writer.print("{c}{c}{c}{c}", .{
+            @as(u8, @intCast(move.from.file)) + 'a', @as(u8, @intCast(move.from.rank)) + '1',
+            @as(u8, @intCast(move.to.file))   + 'a', @as(u8, @intCast(move.to.rank))   + '1',
+        });
+    }
+};
 const MoveError = error{ DestIsAlly, NoPiece, NotAllowed };
 
 pub fn makeMove(self: *Self, move: Move) (MoveError || Allocator.Error)!void {
@@ -311,24 +320,16 @@ pub fn printBoard(self: Self, writer: anytype) !void {
 }
 
 pub fn printMoves(self: Self, writer: anytype) !void {
-    try writer.print("info string moves", .{});
     for (self.moves.items) |move| {
-        try writer.print(" {c}{c}{c}{c}", .{
-            @as(u8, @intCast(move.from.file)) + 'a', @as(u8, @intCast(move.from.rank)) + '1',
-            @as(u8, @intCast(move.to.file))   + 'a', @as(u8, @intCast(move.to.rank))   + '1',
-        });
+        try writer.print(" {any}", .{move});
     }
     try writer.print("\n", .{});
 }
 
 pub fn printLegalMoves(self: Self, writer: anytype) !void {
-    try writer.print("info string legal", .{});
     var keys = self.legal_moves.keyIterator();
     while (keys.next()) |move| {
-        try writer.print(" {c}{c}{c}{c}", .{
-            @as(u8, @intCast(move.from.file)) + 'a', @as(u8, @intCast(move.from.rank)) + '1',
-            @as(u8, @intCast(move.to.file))   + 'a', @as(u8, @intCast(move.to.rank))   + '1',
-        });
+        try writer.print(" {any}", .{move});
     }
     try writer.print("\n", .{});
 }

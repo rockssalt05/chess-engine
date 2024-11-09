@@ -9,8 +9,10 @@ const Engine = struct {
 
     game: Chess,
 
-    uci_response: ?uci.ClientCommand = null,
     debug: bool = true,
+    calculating: bool = false,
+    infinite: bool = false,
+    bestmove: ?Chess.Move = null,
 
     pub fn init(allocator: std.mem.Allocator) Allocator.Error!Self {
         return Self{
@@ -20,6 +22,13 @@ const Engine = struct {
 
     pub fn deinit(self: *Self) void {
         self.game.deinit();
+    }
+
+    pub fn calculate(self: *Self) void {
+        var moves = self.game.legal_moves.keyIterator();
+
+        self.bestmove = moves.next().?.*;
+        if (!self.infinite) self.calculating = false;
     }
 };
 
@@ -31,20 +40,24 @@ pub fn main() !void {
     const stdin = std.io.getStdIn().reader();
     const stdout = std.io.getStdOut().writer();
 
+    // TODO: nonblocking stdin?
     var uci_commands = uci.commandIterator(allocator, stdin);
     defer uci_commands.deinit();
 
     var engine = try Engine.init(allocator);
     defer engine.deinit();
     
-    while (uci_commands.next() catch .empty) |command| {
+    var running: bool = true;
+    while (uci_commands.next() catch .empty) |command| : (if (!running) break) {
+        var uci_response: ?uci.ClientCommand = null;
+
         switch (command) {
-            .uci => engine.uci_response = .uciok,
+            .uci => uci_response = .uciok,
             .debug => |val| engine.debug = val,
-            .isready => engine.uci_response = .readyok,
+            .isready => uci_response = .readyok,
             //.setoption => {},
             //.register => {},
-            .ucinewgame => engine.game.newGame(),
+            .ucinewgame => {}, // reset engine state
             .position => |cmd| {
                 defer if (cmd.moves) |moves| moves.deinit();
                 try engine.game.setFEN(cmd.fen);
@@ -53,26 +66,40 @@ pub fn main() !void {
                     for (moves.items) |move| {
                         engine.game.makeMove(move) catch break;
                     }
+                    try stdout.print("info string moves", .{});
                     try engine.game.printMoves(stdout);
                 }
+                try stdout.print("info string legal", .{});
                 try engine.game.printLegalMoves(stdout);
                 try engine.game.printBoard(stdout);
-                try stdout.print("info string {s}\n", .{if (engine.game.turn == .white) "white" else "black"});
+                try stdout.print("info string turn {s}\n", .{@tagName(engine.game.turn)});
             },
-            //.go => |go| switch (go) {
-            //    .searchmoves => ,
-            //    .ponder => ,
-            //    //...
-            //},
-            //.stop => {},
+            .go => |go| {
+                defer if (go.searchmoves) |moves| moves.deinit();
+                engine.infinite = go.infinite;
+                engine.calculating = true;
+            },
+            .stop => engine.calculating = false,
             //.ponderhit => {},
-            .quit => break,
+            .quit => running = false,
             .empty => {}
         }
 
-        if (engine.uci_response) |response| {
-            try response.writeSerialized(stdout);
-            engine.uci_response = null;
+        if (engine.calculating) engine.calculate();
+
+        if (uci_response == null and engine.bestmove != null and !engine.calculating) {
+            uci_response = .{.bestmove = engine.bestmove.?};
+            engine.bestmove = null;
         }
+
+        if (uci_response) |response| {
+            try response.writeSerialized(stdout);
+            uci_response = null;
+        }
+    }
+
+    if (engine.bestmove) |move| {
+        const response = uci.ClientCommand{.bestmove = move};
+        try response.writeSerialized(stdout);
     }
 }

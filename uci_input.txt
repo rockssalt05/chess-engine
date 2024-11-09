@@ -1,3 +1,6 @@
 uci
 isready
-position startpos moves e2e4 e7e5
+position startpos
+go
+position startpos moves a2a3
+go infinite
